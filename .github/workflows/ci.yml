@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: macos-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Select Xcode
+      run: sudo xcode-select -switch /Applications/Xcode_15.2.app
+      
+    - name: Build
+      run: swift build -v
+      
+    - name: Test
+      run: swift test -v
+      
+    - name: Build Release
+      run: swift build -c release --product Checksum
+      
+    - name: Build CLI
+      run: swift build -c release --product checksum
+
+  lint:
+    runs-on: macos-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Select Xcode
+      run: sudo xcode-select -switch /Applications/Xcode_15.2.app
+      
+    - name: SwiftLint
+      run: |
+        if command -v swiftlint &> /dev/null; then
+          swiftlint
+        else
+          echo "SwiftLint not installed, skipping linting"
+        fi
