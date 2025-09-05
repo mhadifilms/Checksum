@@ -7,66 +7,92 @@ struct ContentView: View {
     @State private var isSourceDropTargeted = false
     @State private var isDestDropTargeted = false
     @State private var showHistory = false
-    
+
     var body: some View {
-        ZStack {
-            LiquidGlassBackground()
-            VStack(alignment: .leading, spacing: 16) {
-                headerSection
-                mainContentSection
-            }
-            .padding(20)
-            
-            // History drawer as overlay sidebar
-            if showHistory {
-                HStack {
-                    Spacer()
-                    historyDrawer
-                        .transition(.asymmetric(
-                            insertion: .move(edge: .trailing).combined(with: .opacity),
-                            removal: .move(edge: .trailing).combined(with: .opacity)
-                        ))
+        GeometryReader { geometry in
+            ZStack {
+                LiquidGlassBackground()
+                VStack(alignment: .leading, spacing: 16) {
+                    headerSection
+                    mainContentSection
                 }
-                .padding(.trailing, 20)
+                .padding(20)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                
+                // History drawer as overlay sidebar
+                if showHistory {
+                    HStack {
+                        Spacer()
+                        historyDrawer
+                            .transition(.asymmetric(
+                                insertion: .move(edge: .trailing).combined(with: .opacity),
+                                removal: .move(edge: .trailing).combined(with: .opacity)
+                            ))
+                    }
+                    .padding(.trailing, 20)
+                }
             }
         }
         .frame(minWidth: 600, minHeight: 500)
+        .onReceive(NotificationCenter.default.publisher(for: .init("ClearInputs"))) { _ in
+            viewModel.sources.removeAll()
+            viewModel.destinations.removeAll()
+        }
     }
     
     private var headerSection: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Checksum").font(.system(size: 28, weight: .semibold, design: .rounded))
-                Text("Clone and verify files with confidence.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            historyButton
+        VStack(spacing: 2) {
+            Text("Checksum")
+                .font(.title2.weight(.semibold))
+            Text("Clone and verify files with confidence.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
+        .frame(maxWidth: .infinity)
+        .overlay(alignment: .trailing) { historyButton }
+        .padding(.bottom, 4)
     }
     
     private var mainContentSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            // Main content area - sources and destinations side by side
-            HStack(alignment: .top, spacing: 16) {
-                sourcesSection
-                destinationSection
+        GeometryReader { proxy in
+            let isPortrait = proxy.size.width < 640
+            VStack(alignment: .leading, spacing: 16) {
+                if isPortrait {
+                    // Compute dynamic heights so content never overflows in portrait
+                    let progressHeight: CGFloat = 96
+                    let spacingBetweenLists: CGFloat = 16
+                    let availableForLists = max(proxy.size.height - progressHeight - spacingBetweenLists, 0)
+                    let listHeight = max(140, availableForLists / 2)
+                    VStack(spacing: 16) {
+                        sourcesSection(height: listHeight)
+                        destinationSection(height: listHeight)
+                    }
+                    .frame(maxHeight: .infinity)
+                } else {
+                    HStack(alignment: .top, spacing: 16) {
+                        sourcesSection()
+                        destinationSection()
+                    }
+                    .frame(maxHeight: .infinity)
+                }
+                Spacer()
+                progressSection
             }
-            
-            // Progress section below
-            progressSection
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
     
-    private var sourcesSection: some View {
+    private func sourcesSection(height: CGFloat? = nil) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             SectionHeader(title: "Sources", systemImage: "folder")
             GlassContainer(highlighted: isSourceDropTargeted) { 
-                list(urls: viewModel.sources, remove: viewModel.removeSource) 
+                    list(urls: viewModel.sources, remove: viewModel.removeSource, height: height ?? 220)
             }
             .onDrop(of: [UTType.fileURL], isTargeted: $isSourceDropTargeted) { providers in
-                handleDrop(providers) { urls in viewModel.addSources(urls: urls) }
+                if !viewModel.isCloning {
+                    _ = handleDrop(providers) { urls in viewModel.addSources(urls: urls) }
+                }
+                return false
             }
             
             Button(action: { pick(sources: true, allowFiles: true) }) {
@@ -77,20 +103,24 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity)
             }
             .buttonStyle(PillButtonStyle())
+            .disabled(viewModel.isCloning)
         }
     }
     
-    private var destinationSection: some View {
+    private func destinationSection(height: CGFloat? = nil) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             SectionHeader(title: "Destination", systemImage: "externaldrive")
             GlassContainer(highlighted: isDestDropTargeted) { 
-                list(urls: viewModel.destinations, remove: viewModel.removeDestination) 
+                    list(urls: viewModel.destinations, remove: viewModel.removeDestination, height: height ?? 220)
             }
             .onDrop(of: [UTType.fileURL], isTargeted: $isDestDropTargeted) { providers in
-                handleDrop(providers) { urls in viewModel.addDestinations(urls: urls.filter { isDirectory($0) }) }
+                if !viewModel.isCloning {
+                    _ = handleDrop(providers) { urls in viewModel.addDestinations(urls: urls.filter { isDirectory($0) }) }
+                }
+                return false
             }
             
-            Button(action: { pick(sources: false, allowFiles: false) }) {
+            Button(action: { pick(sources: false, allowFiles: true) }) {
                 HStack {
                     Image(systemName: "plus")
                     Text("Add Destination Folders")
@@ -98,50 +128,66 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity)
             }
             .buttonStyle(PillButtonStyle())
+            .disabled(viewModel.isCloning)
         }
     }
     
     private var progressSection: some View {
         GlassContainer {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    ProgressView(value: viewModel.overallProgress)
-                        .progressViewStyle(LinearProgressViewStyle(tint: .blue))
-                    Text("\(Int(viewModel.overallProgress * 100))%")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                
-                if viewModel.isCloning {
-                    Text(viewModel.remainingText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                
-                HStack {
-                    Toggle("Overwrite existing files", isOn: $viewModel.overwrite)
-                        .toggleStyle(CheckboxToggleStyle())
-                    Spacer()
-                    Button(action: {
-                        if viewModel.isCloning {
-                            viewModel.stopCurrentJob()
-                        } else {
-                            Task { await viewModel.startClone() }
-                        }
-                    }) {
-                        Text(viewModel.isCloning ? "Stop" : "Start")
-                            .frame(minWidth: 80)
+            HStack(spacing: 16) {
+                // Left side - Progress info
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        ProgressView(value: viewModel.overallProgress)
+                            .progressViewStyle(LinearProgressViewStyle(tint: .blue))
+                        Text("\(Int(viewModel.overallProgress * 100))%")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(minWidth: 35, alignment: .trailing)
                     }
-                    .buttonStyle(PillButtonStyle())
-                    .disabled(viewModel.sources.isEmpty || viewModel.destinations.isEmpty)
+                    
+                    if viewModel.isCloning {
+                        Text(viewModel.remainingText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
+                
+                Spacer()
+                
+                // Right side - Action button
+                Button(action: {
+                    if viewModel.isCloning {
+                        viewModel.stopCurrentJob()
+                    } else {
+                        // If a previous job exists with same inputs/outputs, confirm overwrite
+                        if let last = viewModel.jobs.last, !viewModel.sources.isEmpty, !viewModel.destinations.isEmpty {
+                            let alert = NSAlert()
+                            alert.messageText = "Overwrite previous results?"
+                            alert.informativeText = "Starting again may overwrite files previously copied to the destination."
+                            alert.addButton(withTitle: "OK")
+                            alert.addButton(withTitle: "Cancel")
+                            let response = alert.runModal()
+                            if response == .alertFirstButtonReturn {
+                                Task { await viewModel.startClone(overwrite: true) }
+                            }
+                        } else {
+                            Task { await viewModel.startClone(overwrite: false) }
+                        }
+                    }
+                }) {
+                    Text(viewModel.isCloning ? "Stop" : "Start")
+                        .frame(minWidth: 80)
+                }
+                .buttonStyle(PillButtonStyle())
+                .disabled(viewModel.sources.isEmpty || viewModel.destinations.isEmpty)
             }
         }
     }
     
     private var historyDrawer: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            // Header with better spacing
+        VStack(spacing: 0) {
+            // Header - fixed at top
             HStack {
                 SectionHeader(title: "History", systemImage: "clock")
                 Spacer()
@@ -152,11 +198,16 @@ struct ContentView: View {
                 }
                 .buttonStyle(.plain)
             }
-            .padding(.bottom, 8)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+            .background(.regularMaterial)
             
-            // Content area
+            Divider()
+            
+            // Content area - fills remaining space
             if viewModel.jobs.isEmpty {
                 VStack(spacing: 12) {
+                    Spacer()
                     Image(systemName: "clock.badge.questionmark")
                         .font(.system(size: 32))
                         .foregroundStyle(.secondary)
@@ -167,27 +218,38 @@ struct ContentView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
+                    Spacer()
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.vertical, 40)
+                .padding(.horizontal, 20)
             } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
-                        ForEach(viewModel.jobs) { job in
-                            Button(action: { loadJob(job) }) {
-                                VStack(alignment: .leading, spacing: 6) {
+                List {
+                    ForEach(viewModel.jobs.sorted(by: { $0.createdAt > $1.createdAt })) { job in
+                        Button(action: { 
+                            loadJob(job)
+                            // Also open the destination folder in Finder if job is completed
+                            if job.status == "success" {
+                                openJobResultInFinder(job)
+                            }
+                        }) {
+                            HStack(alignment: .center, spacing: 8) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(jobDisplayName(for: job))
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                        .foregroundStyle(.primary)
+                                        .lineLimit(1)
                                     HStack {
-                                        Text("Job \(job.id.uuidString.prefix(8))")
-                                            .font(.subheadline)
-                                            .fontWeight(.medium)
-                                            .foregroundStyle(.primary)
+                                        Text(job.createdAt, formatter: timeFormatterWithSeconds)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
                                         Spacer()
                                         Text(job.status)
                                             .font(.caption)
-                                            .padding(.horizontal, 8)
-                                            .padding(.vertical, 4)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
                                             .background(
-                                                RoundedRectangle(cornerRadius: 6)
+                                                RoundedRectangle(cornerRadius: 4)
                                                     .fill(job.status == "success" ? .green.opacity(0.2) : 
                                                           job.status == "cancelled" ? .orange.opacity(0.2) : 
                                                           job.status == "failed" ? .red.opacity(0.2) : .blue.opacity(0.2))
@@ -196,40 +258,90 @@ struct ContentView: View {
                                                             job.status == "cancelled" ? .orange : 
                                                             job.status == "failed" ? .red : .blue)
                                     }
-                                    Text(job.createdAt, style: .relative)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
                                 }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(12)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 10)
-                                        .fill(.quaternary.opacity(0.3))
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 10)
-                                        .stroke(.quaternary.opacity(0.5), lineWidth: 0.5)
-                                )
+                                Spacer()
                             }
-                            .buttonStyle(.plain)
+                            .padding(.vertical, 4)
+                        }
+                        .buttonStyle(.plain)
+                        .contextMenu {
+                            Button("Reveal in Finder") {
+                                if let first = job.destinations.first {
+                                    NSWorkspace.shared.activateFileViewerSelecting([first])
+                                }
+                            }
+                            Button("Remove Job") {
+                                viewModel.removeJob(id: job.id)
+                            }
                         }
                     }
-                    .padding(.horizontal, 4)
                 }
+                .listStyle(.sidebar)
+                .scrollContentBackground(.hidden)
             }
         }
         .frame(width: 300)
         .frame(maxHeight: .infinity)
-        .padding(24)
-        .background(
-            RoundedRectangle(cornerRadius: 20)
-                .fill(.ultraThinMaterial.opacity(0.8))
-                .shadow(color: .black.opacity(0.15), radius: 25, x: 0, y: 15)
-        )
+        .background(.regularMaterial)
         .overlay(
-            RoundedRectangle(cornerRadius: 20)
-                .stroke(.quaternary.opacity(0.3), lineWidth: 0.5)
+            Rectangle()
+                .fill(.quaternary.opacity(0.3))
+                .frame(width: 1),
+            alignment: .leading
         )
+    }
+    
+    private func jobDisplayName(for job: CloneViewModel.Job) -> String {
+        if job.sources.count == 1 {
+            return job.sources[0].lastPathComponent
+        } else if job.sources.count > 1 {
+            return "\(job.sources.count) items"
+        } else {
+            return "Job \(job.id.uuidString.prefix(8))"
+        }
+    }
+    
+    private var timeFormatter: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        return formatter
+    }
+    
+    private var timeFormatterWithSeconds: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mm:ss a"
+        return formatter
+    }
+    
+    private func openJobResultInFinder(_ job: CloneViewModel.Job) {
+        // For each source, find the corresponding copied files in each destination
+        var filesToSelect: [URL] = []
+        
+        for source in job.sources {
+            for destination in job.destinations {
+                // If source is a folder, select the folder itself (copied folder) under destination
+                if isDirectory(source) {
+                    let copiedFolder = destination.appendingPathComponent(source.lastPathComponent)
+                    if FileManager.default.fileExists(atPath: copiedFolder.path) {
+                        filesToSelect.append(copiedFolder)
+                    }
+                } else {
+                    // For files, select the copied file under destination
+                    let copiedFile = destination.appendingPathComponent(source.lastPathComponent)
+                    if FileManager.default.fileExists(atPath: copiedFile.path) {
+                        filesToSelect.append(copiedFile)
+                    }
+                }
+            }
+        }
+        
+        if !filesToSelect.isEmpty {
+            NSWorkspace.shared.activateFileViewerSelecting(filesToSelect)
+        } else if let firstDestination = job.destinations.first {
+            // Fallback to just opening the destination folder
+            NSWorkspace.shared.activateFileViewerSelecting([firstDestination])
+        }
     }
     
     private var historyButton: some View {
@@ -241,7 +353,7 @@ struct ContentView: View {
         .buttonStyle(.plain)
     }
     
-    private func list(urls: [URL], remove: @escaping (IndexSet) -> Void) -> some View {
+    private func list(urls: [URL], remove: @escaping (IndexSet) -> Void, height: CGFloat) -> some View {
         Group {
             if urls.isEmpty {
                 VStack(spacing: 8) {
@@ -250,18 +362,18 @@ struct ContentView: View {
                     Text("Drop items here")
                         .foregroundStyle(.secondary)
                 }
-                .frame(maxWidth: .infinity, minHeight: 220)
+                .frame(maxWidth: .infinity, minHeight: height)
             } else {
-                List {
-                    ForEach(urls, id: \.self) { url in
+        List {
+            ForEach(urls, id: \.self) { url in
 						HStack(alignment: .center, spacing: 10) {
 							Image(systemName: isDirectory(url) ? "folder" : "doc")
 								.foregroundStyle(.secondary)
 							VStack(alignment: .leading, spacing: 2) {
 								Text(url.lastPathComponent)
 									.fontWeight(.medium)
-									.lineLimit(1)
-									.truncationMode(.middle)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
 								Text(url.deletingLastPathComponent().path)
 									.font(.caption)
 									.foregroundStyle(.secondary)
@@ -289,40 +401,48 @@ struct ContentView: View {
 						}
 						.contextMenu {
 							Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-						}
-					}
-					.onDelete(perform: remove)
-				}
-				.frame(minHeight: 220)
+                }
+            }
+            .onDelete(perform: remove)
+        }
+        .frame(minHeight: height, maxHeight: height)
 				.listStyle(.inset)
 			}
 		}
-	}
+    }
 
 	private func pick(sources: Bool, allowFiles: Bool = true) {
-		let panel = NSOpenPanel()
-		panel.canChooseFiles = allowFiles
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = allowFiles
 		panel.canChooseDirectories = sources
-		panel.allowsMultipleSelection = true
-		panel.begin { resp in
-			if resp == .OK {
+        panel.allowsMultipleSelection = true
+        
+        // For destinations, only allow directories
+        if !sources {
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+        }
+        
+        panel.begin { resp in
+            if resp == .OK {
 				if sources {
 					viewModel.addSources(urls: panel.urls)
 				} else {
+					// Only add directories for destinations
 					viewModel.addDestinations(urls: panel.urls.filter { isDirectory($0) })
 				}
-			}
-		}
-	}
+            }
+        }
+    }
 
-	private func handleDrop(_ providers: [NSItemProvider], handler: @escaping ([URL]) -> Void) -> Bool {
-		var any = false
-		let group = DispatchGroup()
-		var urls: [URL] = []
-		for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-			any = true
-			group.enter()
-			provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+    private func handleDrop(_ providers: [NSItemProvider], handler: @escaping ([URL]) -> Void) -> Bool {
+        var any = false
+        let group = DispatchGroup()
+        var urls: [URL] = []
+        for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+            any = true
+            group.enter()
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
 				let maybeURL: URL? = {
 					if let data = item as? Data { return URL(dataRepresentation: data, relativeTo: nil) }
 					if let url = item as? URL { return url }
@@ -330,12 +450,12 @@ struct ContentView: View {
 				}()
 				DispatchQueue.main.async {
 					if let url = maybeURL { urls.append(url) }
-					group.leave()
+                group.leave()
 				}
-			}
-		}
-		group.notify(queue: .main) { handler(urls) }
-		return any
+            }
+        }
+        group.notify(queue: .main) { handler(urls) }
+        return any
 	}
 
 	private func isDirectory(_ url: URL) -> Bool {
@@ -348,7 +468,7 @@ struct ContentView: View {
           viewModel.sources = job.sources
           viewModel.destinations = job.destinations
       }
-  }
+    }
 }
 
 #Preview {

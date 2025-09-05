@@ -10,7 +10,6 @@ let package = Package(
 	],
 	products: [
 		.library(name: "ChecksumKit", targets: ["ChecksumKit"]),
-		.executable(name: "checksum", targets: ["checksum"]),
 		.executable(name: "Checksum", targets: ["ChecksumApp"]) // SwiftUI app (P2)
 	],
 	dependencies: [
@@ -20,13 +19,6 @@ let package = Package(
 		.target(
 			name: "ChecksumKit",
 			dependencies: []
-		),
-		.executableTarget(
-			name: "checksum",
-			dependencies: [
-				"ChecksumKit",
-				.product(name: "ArgumentParser", package: "swift-argument-parser")
-			]
 		),
 		.executableTarget(
 			name: "ChecksumApp",

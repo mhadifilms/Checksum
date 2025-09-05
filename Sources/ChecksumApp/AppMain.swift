@@ -20,6 +20,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             center.setNotificationCategories([category])
         }
     }
+    
+    func application(_ application: NSApplication, open urls: [URL]) {
+        // Handle files opened with "Open With Checksum"
+        if let viewModel = viewModel {
+            let fileURLs = urls.filter { url in
+                var isDirectory: ObjCBool = false
+                return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+            }
+            if !fileURLs.isEmpty {
+                viewModel.addSources(urls: fileURLs)
+            }
+        }
+    }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
         if response.notification.request.content.categoryIdentifier == "CLONE_DONE" {
@@ -49,6 +62,26 @@ struct ChecksumMacApp: App {
                 .task { NSApp.activate(ignoringOtherApps: true) }
         }
         .windowStyle(.hiddenTitleBar)
+        .defaultPosition(.center)
+        .defaultSize(width: 900, height: 600)
+        .commands {
+            CommandGroup(replacing: .newItem) {
+                Button("Clear All") {
+                    viewModel.sources.removeAll()
+                    viewModel.destinations.removeAll()
+                }
+                .keyboardShortcut("r", modifiers: .command)
+            }
+            CommandGroup(after: .newItem) {
+                Button("Start Copy") {
+                    if !viewModel.sources.isEmpty && !viewModel.destinations.isEmpty && !viewModel.isCloning {
+                        Task { await viewModel.startClone() }
+                    }
+                }
+                .keyboardShortcut(.return)
+                .disabled(viewModel.sources.isEmpty || viewModel.destinations.isEmpty || viewModel.isCloning)
+            }
+        }
     }
 }
 

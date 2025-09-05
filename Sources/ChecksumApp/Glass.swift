@@ -23,9 +23,9 @@ struct VisualEffectView: NSViewRepresentable {
 
 struct LiquidGlassBackground: View {
     var body: some View {
-        VisualEffectView(material: .menu, blendingMode: .behindWindow)
+        VisualEffectView(material: .underWindowBackground, blendingMode: .behindWindow)
             .ignoresSafeArea()
-            .opacity(0.55)
+            .opacity(0.5)
     }
 }
 

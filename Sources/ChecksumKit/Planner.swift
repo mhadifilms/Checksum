@@ -35,8 +35,6 @@ public struct Planner {
             if srcIsDir {
                 let enumerator = FileManager.default.enumerator(at: src, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])
                 while let file = enumerator?.nextObject() as? URL {
-                    let isDir = (try? file.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
-                    if isDir { continue }
                     let relPath = file.path.replacingOccurrences(of: src.path, with: "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
                     // Copy CONTENTS of src into destination (not nesting the top-level folder)
                     let destinations = job.destinations.map { $0.appendingPathComponent(relPath) }

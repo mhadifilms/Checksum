@@ -21,7 +21,6 @@ final class CloneViewModel: ObservableObject {
     @Published var destinations: [URL] = []
     @Published var isCloning: Bool = false
     @Published var overallProgress: Double = 0
-    @Published var overwrite: Bool = false
     @Published var startedAt: Date?
     @Published var remainingText: String = ""
     @Published var destinationProgress: [UUID: [URL: Double]] = [:]
@@ -38,7 +37,7 @@ final class CloneViewModel: ObservableObject {
     func removeSource(at offsets: IndexSet) { sources.remove(atOffsets: offsets) }
     func removeDestination(at offsets: IndexSet) { destinations.remove(atOffsets: offsets) }
 
-    func startClone() async {
+    func startClone(overwrite: Bool = false) async {
         guard !isCloning else { return }
         isCloning = true
         overallProgress = 0
@@ -71,18 +70,10 @@ final class CloneViewModel: ObservableObject {
                             let verifier = CopyVerifier()
                             let cancelCheck: () -> Bool = { self?.cancelFlagUnsafe ?? false }
                             _ = try verifier.copyAndVerifyFile(source: plan.sourceFile, destination: dest, options: options, progress: { done, total in
-                                let ratio = total > 0 ? Double(done) / Double(total) : 0
+                                // Only update file-level progress, not overall progress
                                 Task { @MainActor [weak self] in
-                                    guard let self, let startedAt = self.startedAt else { return }
-                                    // Smooth ETA using exponential moving average of throughput
-                                    let elapsed = Date().timeIntervalSince(startedAt)
-                                    let bytesDone = Double(done)
-                                    let totalBytes = Double(total)
-                                    let instThroughput = bytesDone / max(elapsed, 0.001)
-                                    self.emaThroughput = self.emaThroughput * 0.85 + instThroughput * 0.15
-                                    let remainingBytes = max(totalBytes - bytesDone, 0)
-                                    let remaining = self.emaThroughput > 0 ? remainingBytes / self.emaThroughput : 0
-                                    self.remainingText = "Elapsed: \(self.formatTime(elapsed)) • Remaining: \(self.formatTime(remaining))"
+                                    guard let self else { return }
+                                    let ratio = total > 0 ? Double(done) / Double(total) : 0
                                     var map = self.destinationProgress[jobId] ?? [:]
                                     map[dest] = ratio
                                     self.destinationProgress[jobId] = map
@@ -92,10 +83,16 @@ final class CloneViewModel: ObservableObject {
                             completed += 1
                             let progress = Double(completed) / Double(totalFiles)
                             Task { @MainActor [weak self] in
-                                self?.overallProgress = progress
-                                var map = self?.destinationProgress[jobId] ?? [:]
+                                guard let self, let startedAt = self.startedAt else { return }
+                                self.overallProgress = progress
+                                var map = self.destinationProgress[jobId] ?? [:]
                                 map[dest] = 1.0
-                                self?.destinationProgress[jobId] = map
+                                self.destinationProgress[jobId] = map
+                                
+                                // Calculate time remaining based on overall progress
+                                let elapsed = Date().timeIntervalSince(startedAt)
+                                let remaining = progress > 0 ? (elapsed / progress) - elapsed : 0
+                                self.remainingText = "Elapsed: \(self.formatTime(elapsed)) • Remaining: \(self.formatTime(remaining))"
                             }
                         } catch {
                             self?.appendJSONL(logURL, ["event": "file_error", "src": plan.sourceFile.path, "dst": dest.path, "error": error.localizedDescription])
@@ -208,6 +205,13 @@ final class CloneViewModel: ObservableObject {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appendingPathComponent("jobs.json")
         if let data = try? JSONEncoder().encode(jobs) { try? data.write(to: url) }
+    }
+
+    func removeJob(id: UUID) {
+        if let idx = jobs.firstIndex(where: { $0.id == id }) {
+            jobs.remove(at: idx)
+            saveJobs()
+        }
     }
 
     private func sendCompletionNotification() {
